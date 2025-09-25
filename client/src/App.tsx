@@ -26,7 +26,7 @@ function AuthRouter() {
     refetchOnWindowFocus: false
   });
 
-  const isAuthenticated = Boolean(user?.user);
+  const isAuthenticated = Boolean(user && (user as any).user);
   const isAuthPage = location === '/login' || location === '/register';
   
   // Show loading state

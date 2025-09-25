@@ -8,7 +8,7 @@ export default function BottomNavigation() {
   };
 
   // Hide bottom navigation on camera screen since it has its own controls
-  if (location === '/') {
+  if (location === '/' || location === '/camera') {
     return null;
   }
 
