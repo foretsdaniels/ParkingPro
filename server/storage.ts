@@ -15,6 +15,7 @@ import {
 import { db } from "./db";
 import { eq, desc, asc, like, count, sql, and, gte } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { GoogleSheetsService } from "./googleSheetsService";
 
 export interface IStorage {
   // Users
@@ -329,19 +330,16 @@ export class DatabaseStorage implements IStorage {
   async getAppSettings(): Promise<Record<string, any>> {
     try {
       const settings = await db.select().from(appSettings);
-      console.log(`[DEBUG] Retrieved ${settings.length} settings from DB`);
       const result: Record<string, any> = {};
       for (const setting of settings) {
         try {
           result[setting.key] = JSON.parse(setting.value);
-          console.log(`[DEBUG] Setting ${setting.key}: ${setting.value} -> parsed:`, result[setting.key]);
         } catch (parseError) {
           // Handle plain string values that weren't JSON encoded
           console.warn(`Setting ${setting.key} has non-JSON value, using as-is:`, setting.value);
           result[setting.key] = setting.value;
         }
       }
-      console.log(`[DEBUG] Final settings object:`, result);
       return result;
     } catch (error) {
       console.error('Error getting app settings:', error);
@@ -370,31 +368,24 @@ export class DatabaseStorage implements IStorage {
 
   async updateAppSetting(key: string, value: any): Promise<AppSetting> {
     try {
-      console.log(`[DEBUG] Updating setting ${key} with value:`, value, `(type: ${typeof value})`);
-      
       // First try to update existing setting
       const [existingSetting] = await db.select().from(appSettings)
         .where(eq(appSettings.key, key));
       
       const stringValue = JSON.stringify(value);
-      console.log(`[DEBUG] JSON stringified value:`, stringValue);
       
       if (existingSetting) {
-        console.log(`[DEBUG] Updating existing setting ${key}, old value: ${existingSetting.value}`);
         // Update existing setting
         const [updated] = await db.update(appSettings)
           .set({ value: stringValue, updatedAt: new Date() })
           .where(eq(appSettings.id, existingSetting.id))
           .returning();
-        console.log(`[DEBUG] Updated setting ${key}, new value in DB:`, updated.value);
         return updated;
       } else {
-        console.log(`[DEBUG] Creating new setting ${key}`);
         // Create new setting
         const [created] = await db.insert(appSettings)
           .values({ key, value: stringValue })
           .returning();
-        console.log(`[DEBUG] Created new setting ${key}, value in DB:`, created.value);
         return created;
       }
     } catch (error) {
@@ -413,42 +404,82 @@ export class DatabaseStorage implements IStorage {
     let synced = 0;
     let failed = 0;
 
-    for (const entryId of pendingIds) {
-      const entry = await this.getAuditEntry(entryId);
-      if (!entry) {
-        this.googleSheetsSyncQueue.delete(entryId);
-        continue;
+    // Check if Google Sheets integration is enabled and configured
+    const googleSheetsIntegration = await this.getAppSetting("googleSheetsIntegration");
+    const googleSheetsId = await this.getAppSetting("googleSheetsId");
+    const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const serviceAccountPrivateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
+
+    if (!googleSheetsIntegration || !serviceAccountEmail || !serviceAccountPrivateKey || !googleSheetsId) {
+      console.log("Google Sheets sync skipped: integration not enabled or service account credentials not configured");
+      return { synced: 0, failed: pendingIds.length };
+    }
+
+    try {
+      // Initialize Google Sheets service
+      const googleSheetsService = new GoogleSheetsService({
+        serviceAccountEmail,
+        serviceAccountPrivateKey,
+        spreadsheetId: googleSheetsId,
+      });
+
+      // Test connection and initialize spreadsheet
+      const connectionTest = await googleSheetsService.testConnection();
+      if (!connectionTest) {
+        console.error("Google Sheets connection test failed");
+        return { synced: 0, failed: pendingIds.length };
+      }
+
+      // Initialize spreadsheet with headers if needed
+      await googleSheetsService.initializeSpreadsheet();
+
+      // Collect all entries to sync
+      const entriesToSync: AuditEntry[] = [];
+      const validEntryIds: string[] = [];
+
+      for (const entryId of pendingIds) {
+        const entry = await this.getAuditEntry(entryId);
+        if (!entry) {
+          this.googleSheetsSyncQueue.delete(entryId);
+          continue;
+        }
+        entriesToSync.push(entry);
+        validEntryIds.push(entryId);
+      }
+
+      if (entriesToSync.length === 0) {
+        console.log("No entries to sync to Google Sheets");
+        return { synced: 0, failed: 0 };
       }
 
       try {
-        // Mock Google Sheets sync - in real implementation, would use Google Sheets API
-        const googleSheetsAPI = process.env.GOOGLE_SHEETS_API_KEY;
-        const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
-        
-        if (googleSheetsAPI && spreadsheetId) {
-          // Real implementation would make API call here
-          console.log(`Syncing entry ${entryId} to Google Sheets...`);
-          
-          // Update entry as synced
+        // Sync all entries in batch
+        await googleSheetsService.appendAuditEntries(entriesToSync);
+
+        // Mark all entries as synced
+        for (const entryId of validEntryIds) {
           await this.updateAuditEntry(entryId, {
             syncedToGoogleSheets: true,
-            googleSheetsRowId: `row_${Date.now()}`,
+            googleSheetsRowId: `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           });
-
           this.googleSheetsSyncQueue.delete(entryId);
           synced++;
-        } else {
-          console.warn("Google Sheets credentials not configured");
-          failed++;
+        }
+
+        console.log(`Successfully synced ${synced} entries to Google Sheets`);
+        
+        // Only update last sync time on successful sync
+        if (synced > 0) {
+          await this.updateAppSetting("lastSyncTime", new Date().toISOString());
         }
       } catch (error) {
-        console.error(`Failed to sync entry ${entryId}:`, error);
-        failed++;
+        console.error(`Failed to sync entries to Google Sheets:`, error);
+        failed = entriesToSync.length;
       }
+    } catch (error) {
+      console.error("Google Sheets service initialization failed:", error);
+      failed = pendingIds.length;
     }
-
-    // Update last sync time
-    await this.updateAppSetting("lastSyncTime", new Date().toISOString());
 
     return { synced, failed };
   }

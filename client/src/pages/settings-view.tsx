@@ -73,20 +73,10 @@ export default function SettingsView() {
 
   const updateSettingMutation = useMutation({
     mutationFn: async ({ key, value }: { key: string; value: any }) => {
-      console.log(`[FRONTEND DEBUG] Mutation starting: ${key} = ${value}`);
-      try {
-        const response = await apiRequest('POST', '/api/settings', { key, value });
-        console.log(`[FRONTEND DEBUG] Response status: ${response.status}`);
-        const result = await response.json();
-        console.log(`[FRONTEND DEBUG] Response data:`, result);
-        return result;
-      } catch (error) {
-        console.error(`[FRONTEND DEBUG] Mutation failed:`, error);
-        throw error;
-      }
+      const response = await apiRequest('POST', '/api/settings', { key, value });
+      return response.json();
     },
     onSuccess: () => {
-      console.log(`[FRONTEND DEBUG] Mutation succeeded, invalidating cache`);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
     },
     onError: (error) => {
@@ -151,7 +141,6 @@ export default function SettingsView() {
   };
 
   const handleSettingChange = (key: string, value: any) => {
-    console.log(`[FRONTEND DEBUG] handleSettingChange called: ${key} = ${value} (type: ${typeof value})`);
     updateSettingMutation.mutate({ key, value });
   };
 

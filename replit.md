@@ -12,6 +12,15 @@ Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
+### Environment Configuration
+The application requires the following environment variables for full functionality:
+- **Database**: `DATABASE_URL` (PostgreSQL connection string)
+- **Object Storage**: Google Cloud Storage credentials via object storage integration
+- **Google Sheets API**: Service account authentication
+  - `GOOGLE_SERVICE_ACCOUNT_EMAIL`: Service account email address
+  - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`: Service account private key (base64 encoded with escaped newlines)
+- **Session Management**: `SESSION_SECRET` for secure session handling
+
 ### Frontend Architecture
 The frontend is built using React with TypeScript and utilizes a modern component-based architecture. The application uses Vite as the build tool and development server, providing fast hot-reload capabilities. The UI is constructed with shadcn/ui components built on top of Radix UI primitives, styled with Tailwind CSS for consistent design patterns.
 
@@ -49,9 +58,9 @@ Images and documents are stored using Google Cloud Storage with a comprehensive 
 ## External Dependencies
 
 ### Cloud Services
-- **Neon Database**: Serverless PostgreSQL hosting for primary data storage
+- **Neon Database**: Serverless PostgreSQL hosting for primary data storage with complete database persistence
 - **Google Cloud Storage**: Object storage for images and file attachments with ACL support
-- **Google Sheets API**: Optional integration for audit data synchronization and reporting
+- **Google Sheets API v4**: Real-time integration for audit data synchronization using service account authentication
 
 ### Third-Party Libraries and APIs
 - **Tesseract.js**: Client-side OCR engine for license plate recognition
