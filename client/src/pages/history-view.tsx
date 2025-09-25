@@ -15,6 +15,7 @@ interface AuditEntry {
   vehicleImagePath?: string;
   notes?: string;
   ocrConfidence?: number;
+  isOffline?: boolean;
 }
 
 interface AuditStats {
@@ -23,6 +24,80 @@ interface AuditStats {
   unauthorizedCount: number;
   unknownCount: number;
 }
+
+// IndexedDB utilities for offline audit entries
+const DB_NAME = 'ParkAuditDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'pendingAudits';
+
+const openDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+    };
+  });
+};
+
+const getPendingAudits = async (): Promise<any[]> => {
+  try {
+    console.log('[DEBUG] Attempting to read from IndexedDB...');
+    const db = await openDB();
+    console.log('[DEBUG] IndexedDB opened successfully');
+    const transaction = db.transaction([STORE_NAME], 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    
+    return new Promise((resolve, reject) => {
+      const request = store.getAll();
+      request.onerror = () => {
+        console.error('[DEBUG] Error reading from IndexedDB store:', request.error);
+        reject(request.error);
+      };
+      request.onsuccess = () => {
+        const results = request.result || [];
+        console.log('[DEBUG] Raw IndexedDB results:', results);
+        
+        // Filter out synced entries and convert to audit entry format
+        const pendingEntries = results
+          .filter(audit => {
+            console.log('[DEBUG] Checking audit sync status:', audit, 'synced:', audit.synced);
+            return !audit.synced;
+          })
+          .map(audit => {
+            const converted = {
+              id: `offline-${audit.id}`,
+              plateNumber: audit.plateNumber || 'UNKNOWN',
+              authorizationStatus: audit.authorizationStatus || 'unknown',
+              timestamp: new Date(audit.timestamp).toISOString(),
+              location: audit.location,
+              parkingZone: audit.parkingZone,
+              plateImagePath: audit.plateImagePath,
+              vehicleImagePath: audit.vehicleImagePath,
+              notes: audit.notes,
+              ocrConfidence: audit.ocrConfidence,
+              isOffline: true
+            };
+            console.log('[DEBUG] Converted audit entry:', converted);
+            return converted;
+          });
+        
+        console.log('[DEBUG] Final pending entries to display:', pendingEntries);
+        resolve(pendingEntries);
+      };
+    });
+  } catch (error) {
+    console.error('[DEBUG] Error reading pending audits from IndexedDB:', error);
+    return [];
+  }
+};
 
 export default function HistoryView() {
   const [, setLocation] = useLocation();
@@ -33,26 +108,90 @@ export default function HistoryView() {
     queryKey: ['/api/stats'],
   });
 
-  const { data: historyData, isLoading } = useQuery({
-    queryKey: ['/api/audit-entries', page, searchTerm],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '20',
-        ...(searchTerm && { search: searchTerm })
-      });
-      
-      const response = await fetch(`/api/audit-entries?${params}`, {
-        credentials: 'include'
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch audit entries');
-      }
-      
-      return response.json();
-    },
+  // Query for offline entries from IndexedDB
+  const { data: offlineEntries, isLoading: offlineLoading } = useQuery({
+    queryKey: ['offline-audit-entries'],
+    queryFn: getPendingAudits,
+    staleTime: 5000, // Refresh every 5 seconds to catch new offline entries
   });
+
+  const { data: historyData, isLoading: onlineLoading } = useQuery({
+    queryKey: ['/api/audit-entries', page, searchTerm, offlineEntries],
+    queryFn: async () => {
+      console.log('[DEBUG] Main query running with offline entries:', offlineEntries);
+      
+      try {
+        const params = new URLSearchParams({
+          page: page.toString(),
+          limit: '20',
+          ...(searchTerm && { search: searchTerm })
+        });
+        
+        const response = await fetch(`/api/audit-entries?${params}`, {
+          credentials: 'include'
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch audit entries');
+        }
+        
+        const onlineData = await response.json();
+        console.log('[DEBUG] Online data received:', onlineData);
+        
+        // Get offline entries and filter by search term if provided
+        const offline = offlineEntries || [];
+        const filteredOffline = searchTerm 
+          ? offline.filter((entry: AuditEntry) => 
+              entry.plateNumber.toLowerCase().includes(searchTerm.toLowerCase())
+            )
+          : offline;
+        
+        console.log('[DEBUG] Filtered offline entries:', filteredOffline);
+        
+        // Merge offline and online entries, with offline entries appearing first
+        const allEntries = [
+          ...filteredOffline,
+          ...(onlineData.entries || [])
+        ];
+        
+        console.log('[DEBUG] All entries before sorting:', allEntries);
+        
+        // Sort by timestamp (newest first)
+        allEntries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        
+        const result = {
+          ...onlineData,
+          entries: allEntries,
+          total: (onlineData.total || 0) + filteredOffline.length
+        };
+        
+        console.log('[DEBUG] Final merged result:', result);
+        return result;
+        
+      } catch (error) {
+        console.log('[DEBUG] API call failed, returning offline-only entries');
+        // If API fails (offline), just return offline entries
+        const offline = offlineEntries || [];
+        const filteredOffline = searchTerm 
+          ? offline.filter((entry: AuditEntry) => 
+              entry.plateNumber.toLowerCase().includes(searchTerm.toLowerCase())
+            )
+          : offline;
+          
+        const result = {
+          entries: filteredOffline,
+          total: filteredOffline.length,
+          hasMore: false
+        };
+        
+        console.log('[DEBUG] Offline-only result:', result);
+        return result;
+      }
+    },
+    enabled: offlineEntries !== undefined, // Wait for offline entries to be loaded first
+  });
+
+  const isLoading = offlineLoading || onlineLoading;
 
   // Reset page when search term changes
   useEffect(() => {
@@ -201,6 +340,15 @@ export default function HistoryView() {
                             className={`w-3 h-3 ${getStatusColor(entry.authorizationStatus)} rounded-full`}
                             data-testid={`status-indicator-${entry.id}`}
                           />
+                          {entry.isOffline && (
+                            <div 
+                              className="flex items-center space-x-1 bg-warning/20 text-warning px-2 py-1 rounded-full text-xs font-medium"
+                              data-testid={`offline-indicator-${entry.id}`}
+                            >
+                              <i className="fas fa-cloud-upload-alt text-xs"></i>
+                              <span>Pending</span>
+                            </div>
+                          )}
                         </div>
                         <div 
                           className="text-sm text-muted-foreground mb-1"
