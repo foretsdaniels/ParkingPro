@@ -6,8 +6,14 @@ import {
   type WhitelistPlate,
   type InsertWhitelistPlate,
   type AppSetting,
-  type InsertAppSetting
+  type InsertAppSetting,
+  users,
+  auditEntries,
+  whitelistPlates,
+  appSettings
 } from "@shared/schema";
+import { db } from "./db";
+import { eq, desc, asc, like, count, sql, and, gte } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -55,55 +61,76 @@ export interface IStorage {
   }>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-  private auditEntries: Map<string, AuditEntry>;
-  private whitelistPlates: Map<string, WhitelistPlate>;
-  private appSettings: Map<string, AppSetting>;
-  private googleSheetsSyncQueue: Set<string>;
+export class DatabaseStorage implements IStorage {
+  private googleSheetsSyncQueue: Set<string> = new Set();
 
   constructor() {
-    this.users = new Map();
-    this.auditEntries = new Map();
-    this.whitelistPlates = new Map();
-    this.appSettings = new Map();
-    this.googleSheetsSyncQueue = new Set();
-
     // Initialize default settings
     this.initializeDefaultSettings();
   }
 
   private async initializeDefaultSettings() {
-    const defaultSettings = [
-      { key: "ocrThreshold", value: 85 },
-      { key: "autoFlash", value: true },
-      { key: "saveFullImages", value: true },
-      { key: "defaultParkingZone", value: "Front Lot - Section A" },
-    ];
+    const defaultSettings = {
+      ocrThreshold: 85,
+      autoFlash: true,
+      saveFullImages: true,
+      gpsAccuracy: 'high',
+      googleSheetsIntegration: false,
+      googleSheetsId: '',
+      lastSyncTime: null,
+      allowOfflineMode: true,
+      autoSyncInterval: 5000,
+      compressionQuality: 0.8,
+      maxImageSize: 5 * 1024 * 1024, // 5MB
+      auditRetentionDays: 90,
+      debugMode: false,
+    };
 
-    for (const setting of defaultSettings) {
-      if (!this.appSettings.has(setting.key)) {
-        await this.updateAppSetting(setting.key, setting.value);
+    for (const [key, value] of Object.entries(defaultSettings)) {
+      try {
+        // Check if setting already exists
+        const existing = await db.select().from(appSettings).where(eq(appSettings.key, key)).limit(1);
+        if (existing.length === 0) {
+          await db.insert(appSettings).values({
+            key,
+            value: JSON.stringify(value),
+          });
+        }
+      } catch (error) {
+        console.error(`Failed to initialize setting ${key}:`, error);
       }
     }
   }
 
   // Users
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    try {
+      const [user] = await db.select().from(users).where(eq(users.id, id));
+      return user || undefined;
+    } catch (error) {
+      console.error('Error getting user:', error);
+      return undefined;
+    }
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    try {
+      const [user] = await db.select().from(users).where(eq(users.username, username));
+      return user || undefined;
+    } catch (error) {
+      console.error('Error getting user by username:', error);
+      return undefined;
+    }
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+    try {
+      const [user] = await db.insert(users).values(insertUser).returning();
+      return user;
+    } catch (error) {
+      console.error('Error creating user:', error);
+      throw error;
+    }
   }
 
   // Audit Entries
@@ -112,74 +139,95 @@ export class MemStorage implements IStorage {
     total: number;
     hasMore: boolean;
   }> {
-    const { page = 1, limit = 20, search } = options;
-    let entries = Array.from(this.auditEntries.values());
+    try {
+      const { page = 1, limit = 20, search } = options;
+      const offset = (page - 1) * limit;
 
-    // Filter by search term
-    if (search) {
-      const searchLower = search.toLowerCase();
-      entries = entries.filter(entry => 
-        entry.plateNumber.toLowerCase().includes(searchLower) ||
-        entry.location?.toLowerCase().includes(searchLower) ||
-        entry.parkingZone?.toLowerCase().includes(searchLower)
-      );
+      let whereConditions = [];
+      if (search) {
+        const searchLower = `%${search.toLowerCase()}%`;
+        whereConditions = [
+          like(auditEntries.plateNumber, searchLower),
+          like(auditEntries.location, searchLower),
+          like(auditEntries.parkingZone, searchLower)
+        ];
+      }
+
+      // Get total count
+      const totalQuery = whereConditions.length > 0 
+        ? db.select({ count: count() }).from(auditEntries)
+            .where(sql`${auditEntries.plateNumber} ILIKE ${`%${search}%`} OR ${auditEntries.location} ILIKE ${`%${search}%`} OR ${auditEntries.parkingZone} ILIKE ${`%${search}%`}`)
+        : db.select({ count: count() }).from(auditEntries);
+      
+      const [{ count: total }] = await totalQuery;
+
+      // Get paginated entries
+      const entriesQuery = whereConditions.length > 0
+        ? db.select().from(auditEntries)
+            .where(sql`${auditEntries.plateNumber} ILIKE ${`%${search}%`} OR ${auditEntries.location} ILIKE ${`%${search}%`} OR ${auditEntries.parkingZone} ILIKE ${`%${search}%`}`)
+            .orderBy(desc(auditEntries.timestamp))
+            .limit(limit)
+            .offset(offset)
+        : db.select().from(auditEntries)
+            .orderBy(desc(auditEntries.timestamp))
+            .limit(limit)
+            .offset(offset);
+
+      const entries = await entriesQuery;
+      const hasMore = offset + entries.length < total;
+
+      return {
+        entries,
+        total,
+        hasMore,
+      };
+    } catch (error) {
+      console.error('Error getting audit entries:', error);
+      return { entries: [], total: 0, hasMore: false };
     }
-
-    // Sort by timestamp (newest first)
-    entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-    const total = entries.length;
-    const startIndex = (page - 1) * limit;
-    const endIndex = startIndex + limit;
-    const paginatedEntries = entries.slice(startIndex, endIndex);
-    const hasMore = endIndex < total;
-
-    return {
-      entries: paginatedEntries,
-      total,
-      hasMore,
-    };
   }
 
   async getAuditEntry(id: string): Promise<AuditEntry | undefined> {
-    return this.auditEntries.get(id);
+    try {
+      const [entry] = await db.select().from(auditEntries).where(eq(auditEntries.id, id));
+      return entry || undefined;
+    } catch (error) {
+      console.error('Error getting audit entry:', error);
+      return undefined;
+    }
   }
 
   async createAuditEntry(insertEntry: InsertAuditEntry): Promise<AuditEntry> {
-    const id = randomUUID();
-    const entry: AuditEntry = {
-      ...insertEntry,
-      id,
-      timestamp: new Date(),
-      syncedToGoogleSheets: false,
-      googleSheetsRowId: null,
-      metadata: null,
-      location: insertEntry.location || null,
-      plateImagePath: insertEntry.plateImagePath || null,
-      vehicleImagePath: insertEntry.vehicleImagePath || null,
-      latitude: insertEntry.latitude || null,
-      longitude: insertEntry.longitude || null,
-      parkingZone: insertEntry.parkingZone || null,
-      ocrConfidence: insertEntry.ocrConfidence || null,
-      authorizationStatus: insertEntry.authorizationStatus || "unknown",
-      notes: insertEntry.notes || null,
-      userId: insertEntry.userId || null,
-    };
-    this.auditEntries.set(id, entry);
-    return entry;
+    try {
+      const [entry] = await db.insert(auditEntries).values(insertEntry).returning();
+      return entry;
+    } catch (error) {
+      console.error('Error creating audit entry:', error);
+      throw error;
+    }
   }
 
   async updateAuditEntry(id: string, updates: Partial<AuditEntry>): Promise<AuditEntry | undefined> {
-    const entry = this.auditEntries.get(id);
-    if (!entry) return undefined;
-
-    const updatedEntry = { ...entry, ...updates };
-    this.auditEntries.set(id, updatedEntry);
-    return updatedEntry;
+    try {
+      const [updatedEntry] = await db.update(auditEntries)
+        .set(updates)
+        .where(eq(auditEntries.id, id))
+        .returning();
+      return updatedEntry || undefined;
+    } catch (error) {
+      console.error('Error updating audit entry:', error);
+      return undefined;
+    }
   }
 
   async deleteAuditEntry(id: string): Promise<boolean> {
-    return this.auditEntries.delete(id);
+    try {
+      const result = await db.delete(auditEntries).where(eq(auditEntries.id, id));
+      return result.rowCount > 0;
+    } catch (error) {
+      console.error('Error deleting audit entry:', error);
+      return false;
+    }
   }
 
   async getAuditStats(): Promise<{
@@ -189,78 +237,170 @@ export class MemStorage implements IStorage {
     unknownCount: number;
     todayScans: number;
   }> {
-    const entries = Array.from(this.auditEntries.values());
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-    const totalScans = entries.length;
-    const authorizedCount = entries.filter(e => e.authorizationStatus === "authorized").length;
-    const unauthorizedCount = entries.filter(e => e.authorizationStatus === "unauthorized").length;
-    const unknownCount = entries.filter(e => e.authorizationStatus === "unknown").length;
-    const todayScans = entries.filter(e => new Date(e.timestamp) >= today).length;
+      // Get total counts by status
+      const [totalResult] = await db.select({ count: count() }).from(auditEntries);
+      
+      const [authorizedResult] = await db.select({ count: count() })
+        .from(auditEntries)
+        .where(eq(auditEntries.authorizationStatus, "authorized"));
+      
+      const [unauthorizedResult] = await db.select({ count: count() })
+        .from(auditEntries)
+        .where(eq(auditEntries.authorizationStatus, "unauthorized"));
+      
+      const [unknownResult] = await db.select({ count: count() })
+        .from(auditEntries)
+        .where(eq(auditEntries.authorizationStatus, "unknown"));
+      
+      const [todayResult] = await db.select({ count: count() })
+        .from(auditEntries)
+        .where(gte(auditEntries.timestamp, today));
 
-    return {
-      totalScans,
-      authorizedCount,
-      unauthorizedCount,
-      unknownCount,
-      todayScans,
-    };
+      return {
+        totalScans: totalResult.count,
+        authorizedCount: authorizedResult.count,
+        unauthorizedCount: unauthorizedResult.count,
+        unknownCount: unknownResult.count,
+        todayScans: todayResult.count,
+      };
+    } catch (error) {
+      console.error('Error getting audit stats:', error);
+      return {
+        totalScans: 0,
+        authorizedCount: 0,
+        unauthorizedCount: 0,
+        unknownCount: 0,
+        todayScans: 0,
+      };
+    }
   }
 
   // Whitelist
   async getWhitelistPlates(): Promise<WhitelistPlate[]> {
-    return Array.from(this.whitelistPlates.values())
-      .sort((a, b) => a.plateNumber.localeCompare(b.plateNumber));
+    try {
+      return await db.select().from(whitelistPlates)
+        .orderBy(asc(whitelistPlates.plateNumber));
+    } catch (error) {
+      console.error('Error getting whitelist plates:', error);
+      return [];
+    }
   }
 
   async getWhitelistPlateByNumber(plateNumber: string): Promise<WhitelistPlate | undefined> {
-    return Array.from(this.whitelistPlates.values()).find(
-      plate => plate.plateNumber.toLowerCase() === plateNumber.toLowerCase()
-    );
+    try {
+      const [plate] = await db.select().from(whitelistPlates)
+        .where(eq(whitelistPlates.plateNumber, plateNumber.toUpperCase()));
+      return plate || undefined;
+    } catch (error) {
+      console.error('Error getting whitelist plate by number:', error);
+      return undefined;
+    }
   }
 
   async createWhitelistPlate(insertPlate: InsertWhitelistPlate): Promise<WhitelistPlate> {
-    const id = randomUUID();
-    const plate: WhitelistPlate = {
-      plateNumber: insertPlate.plateNumber,
-      description: insertPlate.description || null,
-      addedBy: insertPlate.addedBy || null,
-      id,
-      createdAt: new Date(),
-    };
-    this.whitelistPlates.set(id, plate);
-    return plate;
+    try {
+      const plateData = {
+        ...insertPlate,
+        plateNumber: insertPlate.plateNumber.toUpperCase()
+      };
+      const [plate] = await db.insert(whitelistPlates).values(plateData).returning();
+      return plate;
+    } catch (error) {
+      console.error('Error creating whitelist plate:', error);
+      throw error;
+    }
   }
 
   async deleteWhitelistPlate(id: string): Promise<boolean> {
-    return this.whitelistPlates.delete(id);
+    try {
+      const result = await db.delete(whitelistPlates).where(eq(whitelistPlates.id, id));
+      return result.rowCount > 0;
+    } catch (error) {
+      console.error('Error deleting whitelist plate:', error);
+      return false;
+    }
   }
 
   // App Settings
   async getAppSettings(): Promise<Record<string, any>> {
-    const settings: Record<string, any> = {};
-    for (const setting of Array.from(this.appSettings.values())) {
-      settings[setting.key] = setting.value;
+    try {
+      const settings = await db.select().from(appSettings);
+      console.log(`[DEBUG] Retrieved ${settings.length} settings from DB`);
+      const result: Record<string, any> = {};
+      for (const setting of settings) {
+        try {
+          result[setting.key] = JSON.parse(setting.value);
+          console.log(`[DEBUG] Setting ${setting.key}: ${setting.value} -> parsed:`, result[setting.key]);
+        } catch (parseError) {
+          // Handle plain string values that weren't JSON encoded
+          console.warn(`Setting ${setting.key} has non-JSON value, using as-is:`, setting.value);
+          result[setting.key] = setting.value;
+        }
+      }
+      console.log(`[DEBUG] Final settings object:`, result);
+      return result;
+    } catch (error) {
+      console.error('Error getting app settings:', error);
+      return {};
     }
-    return settings;
   }
 
   async getAppSetting(key: string): Promise<any> {
-    const setting = this.appSettings.get(key);
-    return setting?.value;
+    try {
+      const [setting] = await db.select().from(appSettings)
+        .where(eq(appSettings.key, key));
+      if (!setting) return undefined;
+      
+      try {
+        return JSON.parse(setting.value);
+      } catch (parseError) {
+        // Handle plain string values that weren't JSON encoded
+        console.warn(`Setting ${key} has non-JSON value, using as-is:`, setting.value);
+        return setting.value;
+      }
+    } catch (error) {
+      console.error(`Error getting app setting ${key}:`, error);
+      return undefined;
+    }
   }
 
   async updateAppSetting(key: string, value: any): Promise<AppSetting> {
-    const id = randomUUID();
-    const setting: AppSetting = {
-      id,
-      key,
-      value,
-      updatedAt: new Date(),
-    };
-    this.appSettings.set(key, setting);
-    return setting;
+    try {
+      console.log(`[DEBUG] Updating setting ${key} with value:`, value, `(type: ${typeof value})`);
+      
+      // First try to update existing setting
+      const [existingSetting] = await db.select().from(appSettings)
+        .where(eq(appSettings.key, key));
+      
+      const stringValue = JSON.stringify(value);
+      console.log(`[DEBUG] JSON stringified value:`, stringValue);
+      
+      if (existingSetting) {
+        console.log(`[DEBUG] Updating existing setting ${key}, old value: ${existingSetting.value}`);
+        // Update existing setting
+        const [updated] = await db.update(appSettings)
+          .set({ value: stringValue, updatedAt: new Date() })
+          .where(eq(appSettings.id, existingSetting.id))
+          .returning();
+        console.log(`[DEBUG] Updated setting ${key}, new value in DB:`, updated.value);
+        return updated;
+      } else {
+        console.log(`[DEBUG] Creating new setting ${key}`);
+        // Create new setting
+        const [created] = await db.insert(appSettings)
+          .values({ key, value: stringValue })
+          .returning();
+        console.log(`[DEBUG] Created new setting ${key}, value in DB:`, created.value);
+        return created;
+      }
+    } catch (error) {
+      console.error(`Error updating app setting ${key}:`, error);
+      throw error;
+    }
   }
 
   // Google Sheets Sync
@@ -274,7 +414,7 @@ export class MemStorage implements IStorage {
     let failed = 0;
 
     for (const entryId of pendingIds) {
-      const entry = this.auditEntries.get(entryId);
+      const entry = await this.getAuditEntry(entryId);
       if (!entry) {
         this.googleSheetsSyncQueue.delete(entryId);
         continue;
@@ -331,4 +471,4 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
