@@ -20,6 +20,12 @@ export default function BottomNavigation() {
       testId: 'nav-scan'
     },
     {
+      path: '/dashboard',
+      icon: 'fas fa-chart-bar',
+      label: 'Dashboard',
+      testId: 'nav-dashboard'
+    },
+    {
       path: '/history',
       icon: 'fas fa-history', 
       label: 'History',

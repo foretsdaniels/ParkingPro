@@ -24,7 +24,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
 
   // Audit Entries
-  getAuditEntries(options: { page?: number; limit?: number; search?: string }): Promise<{
+  getAuditEntries(options: { page?: number; limit?: number; search?: string; status?: string }): Promise<{
     entries: AuditEntry[];
     total: number;
     hasMore: boolean;
@@ -33,12 +33,16 @@ export interface IStorage {
   createAuditEntry(entry: InsertAuditEntry): Promise<AuditEntry>;
   updateAuditEntry(id: string, updates: Partial<AuditEntry>): Promise<AuditEntry | undefined>;
   deleteAuditEntry(id: string): Promise<boolean>;
-  getAuditStats(): Promise<{
+  getAuditStats(period?: string): Promise<{
     totalScans: number;
-    authorizedCount: number;
-    unauthorizedCount: number;
+    authorizedVehicles: number;
+    unauthorizedVehicles: number;
     unknownCount: number;
-    todayScans: number;
+    recentActivity: number;
+    avgConfidence: number;
+    topZones: Array<{ zone: string; count: number }>;
+    dailyTrends: Array<{ date: string; scans: number; authorized: number; unauthorized: number }>;
+    hourlyDistribution: Array<{ hour: number; scans: number }>;
   }>;
 
   // Whitelist
@@ -135,37 +139,43 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Audit Entries
-  async getAuditEntries(options: { page?: number; limit?: number; search?: string }): Promise<{
+  async getAuditEntries(options: { page?: number; limit?: number; search?: string; status?: string }): Promise<{
     entries: AuditEntry[];
     total: number;
     hasMore: boolean;
   }> {
     try {
-      const { page = 1, limit = 20, search } = options;
+      const { page = 1, limit = 20, search, status } = options;
       const offset = (page - 1) * limit;
 
+      // Build where conditions
       let whereConditions = [];
+      
       if (search) {
-        const searchLower = `%${search.toLowerCase()}%`;
-        whereConditions = [
-          like(auditEntries.plateNumber, searchLower),
-          like(auditEntries.location, searchLower),
-          like(auditEntries.parkingZone, searchLower)
-        ];
+        whereConditions.push(
+          sql`${auditEntries.plateNumber} ILIKE ${`%${search}%`} OR ${auditEntries.location} ILIKE ${`%${search}%`} OR ${auditEntries.parkingZone} ILIKE ${`%${search}%`}`
+        );
+      }
+      
+      if (status && status !== 'all') {
+        whereConditions.push(
+          eq(auditEntries.authorizationStatus, status)
+        );
       }
 
+      const whereClause = whereConditions.length > 0 ? and(...whereConditions) : undefined;
+
       // Get total count
-      const totalQuery = whereConditions.length > 0 
-        ? db.select({ count: count() }).from(auditEntries)
-            .where(sql`${auditEntries.plateNumber} ILIKE ${`%${search}%`} OR ${auditEntries.location} ILIKE ${`%${search}%`} OR ${auditEntries.parkingZone} ILIKE ${`%${search}%`}`)
+      const totalQuery = whereClause 
+        ? db.select({ count: count() }).from(auditEntries).where(whereClause)
         : db.select({ count: count() }).from(auditEntries);
       
       const [{ count: total }] = await totalQuery;
 
       // Get paginated entries
-      const entriesQuery = whereConditions.length > 0
+      const entriesQuery = whereClause
         ? db.select().from(auditEntries)
-            .where(sql`${auditEntries.plateNumber} ILIKE ${`%${search}%`} OR ${auditEntries.location} ILIKE ${`%${search}%`} OR ${auditEntries.parkingZone} ILIKE ${`%${search}%`}`)
+            .where(whereClause)
             .orderBy(desc(auditEntries.timestamp))
             .limit(limit)
             .offset(offset)
@@ -231,16 +241,40 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getAuditStats(): Promise<{
+  async getAuditStats(period: string = '7days'): Promise<{
     totalScans: number;
-    authorizedCount: number;
-    unauthorizedCount: number;
+    authorizedVehicles: number;
+    unauthorizedVehicles: number;
     unknownCount: number;
-    todayScans: number;
+    recentActivity: number;
+    avgConfidence: number;
+    topZones: Array<{ zone: string; count: number }>;
+    dailyTrends: Array<{ date: string; scans: number; authorized: number; unauthorized: number }>;
+    hourlyDistribution: Array<{ hour: number; scans: number }>;
   }> {
     try {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
+      
+      // Calculate period start date based on selected period
+      let periodStart = new Date();
+      switch (period) {
+        case '1day':
+          periodStart.setDate(periodStart.getDate() - 1);
+          break;
+        case '7days':
+          periodStart.setDate(periodStart.getDate() - 7);
+          break;
+        case '30days':
+          periodStart.setDate(periodStart.getDate() - 30);
+          break;
+        case '90days':
+          periodStart.setDate(periodStart.getDate() - 90);
+          break;
+        default:
+          periodStart.setDate(periodStart.getDate() - 7);
+      }
+      periodStart.setHours(0, 0, 0, 0);
 
       // Get total counts by status
       const [totalResult] = await db.select({ count: count() }).from(auditEntries);
@@ -261,21 +295,86 @@ export class DatabaseStorage implements IStorage {
         .from(auditEntries)
         .where(gte(auditEntries.timestamp, today));
 
+      // Get average confidence
+      const [avgConfidenceResult] = await db.select({ 
+        avgConfidence: sql<number>`AVG(${auditEntries.ocrConfidence})` 
+      }).from(auditEntries);
+
+      // Get top parking zones
+      const topZonesResult = await db.select({
+        zone: auditEntries.parkingZone,
+        count: count()
+      })
+        .from(auditEntries)
+        .groupBy(auditEntries.parkingZone)
+        .orderBy(sql`count DESC`)
+        .limit(5);
+
+      // Get daily trends for selected period
+      const dailyTrendsRaw = await db.select({
+        date: sql<string>`DATE(${auditEntries.timestamp})`,
+        total: count(),
+        authorized: sql<number>`SUM(CASE WHEN ${auditEntries.authorizationStatus} = 'authorized' THEN 1 ELSE 0 END)`,
+        unauthorized: sql<number>`SUM(CASE WHEN ${auditEntries.authorizationStatus} = 'unauthorized' THEN 1 ELSE 0 END)`
+      })
+        .from(auditEntries)
+        .where(gte(auditEntries.timestamp, periodStart))
+        .groupBy(sql`DATE(${auditEntries.timestamp})`)
+        .orderBy(sql`DATE(${auditEntries.timestamp})`);
+
+      // Get hourly distribution
+      const hourlyDistributionRaw = await db.select({
+        hour: sql<number>`EXTRACT(HOUR FROM ${auditEntries.timestamp})`,
+        count: count()
+      })
+        .from(auditEntries)
+        .where(gte(auditEntries.timestamp, periodStart))
+        .groupBy(sql`EXTRACT(HOUR FROM ${auditEntries.timestamp})`)
+        .orderBy(sql`EXTRACT(HOUR FROM ${auditEntries.timestamp})`);
+
+      // Format daily trends
+      const dailyTrends = dailyTrendsRaw.map(row => ({
+        date: row.date,
+        scans: Number(row.total),
+        authorized: Number(row.authorized),
+        unauthorized: Number(row.unauthorized)
+      }));
+
+      // Format hourly distribution
+      const hourlyDistribution = Array.from({ length: 24 }, (_, hour) => {
+        const hourData = hourlyDistributionRaw.find(row => Number(row.hour) === hour);
+        return {
+          hour,
+          scans: hourData ? Number(hourData.count) : 0
+        };
+      });
+
       return {
-        totalScans: totalResult.count,
-        authorizedCount: authorizedResult.count,
-        unauthorizedCount: unauthorizedResult.count,
-        unknownCount: unknownResult.count,
-        todayScans: todayResult.count,
+        totalScans: Number(totalResult.count),
+        authorizedVehicles: Number(authorizedResult.count),
+        unauthorizedVehicles: Number(unauthorizedResult.count),
+        unknownCount: Number(unknownResult.count),
+        recentActivity: Number(todayResult.count),
+        avgConfidence: Number(avgConfidenceResult.avgConfidence) || 0,
+        topZones: topZonesResult.map(row => ({
+          zone: row.zone || 'Unknown Zone',
+          count: Number(row.count)
+        })),
+        dailyTrends,
+        hourlyDistribution
       };
     } catch (error) {
       console.error('Error getting audit stats:', error);
       return {
         totalScans: 0,
-        authorizedCount: 0,
-        unauthorizedCount: 0,
+        authorizedVehicles: 0,
+        unauthorizedVehicles: 0,
         unknownCount: 0,
-        todayScans: 0,
+        recentActivity: 0,
+        avgConfidence: 0,
+        topZones: [],
+        dailyTrends: [],
+        hourlyDistribution: Array.from({ length: 24 }, (_, hour) => ({ hour, scans: 0 }))
       };
     }
   }

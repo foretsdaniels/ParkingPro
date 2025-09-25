@@ -63,7 +63,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 20;
       const search = req.query.search as string;
-      const entries = await storage.getAuditEntries({ page, limit, search });
+      const status = req.query.status as string;
+      const entries = await storage.getAuditEntries({ page, limit, search, status });
       res.json(entries);
     } catch (error) {
       console.error("Error fetching audit entries:", error);
@@ -234,7 +235,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Statistics endpoint
   app.get("/api/stats", requireAuth, async (req, res) => {
     try {
-      const stats = await storage.getAuditStats();
+      const period = req.query.period as string || '7days';
+      const stats = await storage.getAuditStats(period);
       res.json(stats);
     } catch (error) {
       console.error("Error fetching stats:", error);

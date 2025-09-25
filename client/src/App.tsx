@@ -9,6 +9,7 @@ import CameraView from "./pages/camera-view.tsx";
 import ConfirmationView from "./pages/confirmation-view.tsx";
 import HistoryView from "./pages/history-view.tsx";
 import SettingsView from "./pages/settings-view.tsx";
+import DesktopDashboard from "./pages/dashboard.tsx";
 import LoginPage from "./pages/login.tsx";
 import RegisterPage from "./pages/register.tsx";
 import BottomNavigation from "./components/bottom-navigation.tsx";
@@ -69,6 +70,7 @@ function AuthRouter() {
       <Switch>
         <Route path="/" component={CameraView} />
         <Route path="/camera" component={CameraView} />
+        <Route path="/dashboard" component={DesktopDashboard} />
         <Route path="/confirmation" component={ConfirmationView} />
         <Route path="/history" component={HistoryView} />
         <Route path="/settings" component={SettingsView} />
