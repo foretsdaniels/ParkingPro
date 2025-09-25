@@ -19,7 +19,7 @@ function requireAuth(req: any, res: any, next: any) {
 export async function registerRoutes(app: Express): Promise<Server> {
   const objectStorageService = new ObjectStorageService();
 
-  // Object storage endpoints
+  // Object storage endpoints (public)
   app.get("/public-objects/:filePath(*)", async (req, res) => {
     const filePath = req.params.filePath;
     try {
@@ -34,7 +34,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/objects/:objectPath(*)", async (req, res) => {
+  app.get("/objects/:objectPath(*)", requireAuth, async (req, res) => {
     try {
       const objectFile = await objectStorageService.getObjectEntityFile(req.path);
       objectStorageService.downloadObject(objectFile, res);
@@ -47,7 +47,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/objects/upload", async (req, res) => {
+  app.post("/api/objects/upload", requireAuth, async (req, res) => {
     try {
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
       res.json({ uploadURL });
@@ -58,7 +58,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Audit entries endpoints
-  app.get("/api/audit-entries", async (req, res) => {
+  app.get("/api/audit-entries", requireAuth, async (req, res) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 20;
@@ -71,7 +71,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/audit-entries", async (req, res) => {
+  app.post("/api/audit-entries", requireAuth, async (req, res) => {
     try {
       const validatedData = insertAuditEntrySchema.parse(req.body);
       
@@ -96,7 +96,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/audit-entries/:id", async (req, res) => {
+  app.put("/api/audit-entries/:id", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
       const updates = req.body;
@@ -111,7 +111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/audit-entries/:id/images", async (req, res) => {
+  app.put("/api/audit-entries/:id/images", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
       const { plateImageURL, vehicleImageURL } = req.body;
@@ -147,7 +147,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Whitelist endpoints
-  app.get("/api/whitelist", async (req, res) => {
+  app.get("/api/whitelist", requireAuth, async (req, res) => {
     try {
       const plates = await storage.getWhitelistPlates();
       res.json(plates);
@@ -157,7 +157,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/whitelist", async (req, res) => {
+  app.post("/api/whitelist", requireAuth, async (req, res) => {
     try {
       const validatedData = insertWhitelistPlateSchema.parse(req.body);
       const plate = await storage.createWhitelistPlate(validatedData);
@@ -171,7 +171,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/whitelist/:id", async (req, res) => {
+  app.delete("/api/whitelist/:id", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
       const success = await storage.deleteWhitelistPlate(id);
@@ -186,7 +186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Settings endpoints
-  app.get("/api/settings", async (req, res) => {
+  app.get("/api/settings", requireAuth, async (req, res) => {
     try {
       const settings = await storage.getAppSettings();
       res.json(settings);
@@ -196,7 +196,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/settings", async (req, res) => {
+  app.post("/api/settings", requireAuth, async (req, res) => {
     try {
       const validatedData = insertAppSettingSchema.parse(req.body);
       const setting = await storage.updateAppSetting(validatedData.key, validatedData.value);
@@ -211,7 +211,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Google Sheets sync endpoints
-  app.post("/api/sync/google-sheets", async (req, res) => {
+  app.post("/api/sync/google-sheets", requireAuth, async (req, res) => {
     try {
       const result = await storage.syncPendingToGoogleSheets();
       res.json(result);
@@ -221,7 +221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/sync/status", async (req, res) => {
+  app.get("/api/sync/status", requireAuth, async (req, res) => {
     try {
       const status = await storage.getSyncStatus();
       res.json(status);
@@ -232,7 +232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Statistics endpoint
-  app.get("/api/stats", async (req, res) => {
+  app.get("/api/stats", requireAuth, async (req, res) => {
     try {
       const stats = await storage.getAuditStats();
       res.json(stats);

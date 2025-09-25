@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest } from "@/lib/queryClient";
+import { LogOut } from "lucide-react";
 
 interface AppSettings {
   ocrThreshold: number;
@@ -131,6 +132,29 @@ export default function SettingsView() {
       toast({
         title: "Remove failed",
         description: "Could not remove license plate from whitelist.",
+        variant: "destructive"
+      });
+    }
+  });
+
+  const logoutMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/auth/logout', {});
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Logged out",
+        description: "You have been successfully logged out.",
+      });
+      queryClient.clear(); // Clear all cached data
+      setLocation('/login');
+    },
+    onError: (error) => {
+      console.error('Logout failed:', error);
+      toast({
+        title: "Logout failed",
+        description: "Could not log out properly.",
         variant: "destructive"
       });
     }
@@ -405,14 +429,27 @@ export default function SettingsView() {
                   })()}
                 </span>
               </div>
-              <Button 
-                variant="destructive"
-                onClick={handleClearLocalData}
-                className="w-full"
-                data-testid="button-clear-data"
-              >
-                Clear Local Data
-              </Button>
+              <div className="space-y-2">
+                <Button 
+                  variant="destructive"
+                  onClick={handleClearLocalData}
+                  className="w-full"
+                  data-testid="button-clear-data"
+                >
+                  Clear Local Data
+                </Button>
+                
+                <Button 
+                  variant="outline"
+                  onClick={() => logoutMutation.mutate()}
+                  disabled={logoutMutation.isPending}
+                  className="w-full"
+                  data-testid="button-logout"
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  {logoutMutation.isPending ? 'Logging out...' : 'Logout'}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
