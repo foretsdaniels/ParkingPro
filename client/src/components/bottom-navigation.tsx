@@ -7,6 +7,11 @@ export default function BottomNavigation() {
     return location === path;
   };
 
+  // Hide bottom navigation on camera screen since it has its own controls
+  if (location === '/') {
+    return null;
+  }
+
   const navigationItems = [
     {
       path: '/',
