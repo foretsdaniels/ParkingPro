@@ -24,7 +24,18 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
 
   // Audit Entries
-  getAuditEntries(options: { page?: number; limit?: number; search?: string; status?: string }): Promise<{
+  getAuditEntries(options: { 
+    page?: number; 
+    limit?: number; 
+    search?: string; 
+    status?: string;
+    zone?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    confidenceMin?: number;
+    confidenceMax?: number;
+    location?: string;
+  }): Promise<{
     entries: AuditEntry[];
     total: number;
     hasMore: boolean;
@@ -143,13 +154,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Audit Entries
-  async getAuditEntries(options: { page?: number; limit?: number; search?: string; status?: string }): Promise<{
+  async getAuditEntries(options: { 
+    page?: number; 
+    limit?: number; 
+    search?: string; 
+    status?: string;
+    zone?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    confidenceMin?: number;
+    confidenceMax?: number;
+    location?: string;
+  }): Promise<{
     entries: AuditEntry[];
     total: number;
     hasMore: boolean;
   }> {
     try {
-      const { page = 1, limit = 20, search, status } = options;
+      const { page = 1, limit = 20, search, status, zone, dateFrom, dateTo, confidenceMin, confidenceMax, location } = options;
       const offset = (page - 1) * limit;
 
       // Build where conditions
@@ -164,6 +186,44 @@ export class DatabaseStorage implements IStorage {
       if (status && status !== 'all') {
         whereConditions.push(
           eq(auditEntries.authorizationStatus, status)
+        );
+      }
+      
+      if (zone && zone !== 'all') {
+        whereConditions.push(
+          eq(auditEntries.parkingZone, zone)
+        );
+      }
+      
+      if (dateFrom) {
+        whereConditions.push(
+          gte(auditEntries.timestamp, new Date(dateFrom))
+        );
+      }
+      
+      if (dateTo) {
+        const endDate = new Date(dateTo);
+        endDate.setHours(23, 59, 59, 999); // Include the entire end date
+        whereConditions.push(
+          sql`${auditEntries.timestamp} <= ${endDate}`
+        );
+      }
+      
+      if (confidenceMin !== undefined && confidenceMin > 0) {
+        whereConditions.push(
+          sql`${auditEntries.ocrConfidence} >= ${confidenceMin}`
+        );
+      }
+      
+      if (confidenceMax !== undefined && confidenceMax < 100) {
+        whereConditions.push(
+          sql`${auditEntries.ocrConfidence} <= ${confidenceMax}`
+        );
+      }
+      
+      if (location) {
+        whereConditions.push(
+          sql`${auditEntries.location} ILIKE ${`%${location}%`}`
         );
       }
 

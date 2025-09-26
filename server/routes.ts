@@ -74,7 +74,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const limit = parseInt(req.query.limit as string) || 20;
       const search = req.query.search as string;
       const status = req.query.status as string;
-      const entries = await storage.getAuditEntries({ page, limit, search, status });
+      const zone = req.query.zone as string;
+      const dateFrom = req.query.dateFrom as string;
+      const dateTo = req.query.dateTo as string;
+      const confidenceMin = req.query.confidenceMin ? parseInt(req.query.confidenceMin as string) : undefined;
+      const confidenceMax = req.query.confidenceMax ? parseInt(req.query.confidenceMax as string) : undefined;
+      const location = req.query.location as string;
+      
+      const entries = await storage.getAuditEntries({ 
+        page, 
+        limit, 
+        search, 
+        status, 
+        zone, 
+        dateFrom, 
+        dateTo, 
+        confidenceMin, 
+        confidenceMax, 
+        location 
+      });
       res.json(entries);
     } catch (error) {
       console.error("Error fetching audit entries:", error);

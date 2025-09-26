@@ -17,6 +17,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileText, Trash2, Edit, RefreshCw, Download, FileSpreadsheet, Keyboard, HelpCircle } from "lucide-react";
 import { exportToCSV, exportToPDF, exportStatsToCSV, prepareAuditEntriesForExport, type ExportStats } from "@/lib/exportUtils";
 import { useKeyboardShortcuts, createSelectAllShortcut, createDeleteShortcut, createEscapeShortcut, createExportShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { AdvancedFilters, defaultFilters, type AdvancedFilterOptions } from "@/components/advanced-filters";
 import { format, startOfDay, endOfDay, subDays, subWeeks, subMonths } from "date-fns";
 
 interface AuditEntry {
@@ -52,8 +53,7 @@ export default function DesktopDashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedPeriod, setSelectedPeriod] = useState('7days');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterOptions>(defaultFilters);
   
   // Bulk operations state
   const [selectedEntries, setSelectedEntries] = useState<Set<string>>(new Set());
@@ -155,14 +155,29 @@ export default function DesktopDashboard() {
 
   // Fetch recent audit entries
   const { data: recentEntries, isLoading: entriesLoading } = useQuery<AuditEntry[]>({
-    queryKey: ['/api/audit-entries', { search: searchQuery, status: statusFilter, limit: 10 }],
+    queryKey: ['/api/audit-entries', { 
+      search: advancedFilters.searchQuery, 
+      status: advancedFilters.status, 
+      zone: advancedFilters.zone,
+      dateRange: advancedFilters.dateRange,
+      confidenceRange: advancedFilters.confidenceRange,
+      location: advancedFilters.location,
+      limit: 10 
+    }],
     queryFn: async () => {
       const params = new URLSearchParams({
         limit: '10',
         page: '1'
       });
-      if (searchQuery) params.append('search', searchQuery);
-      if (statusFilter !== 'all') params.append('status', statusFilter);
+      
+      if (advancedFilters.searchQuery) params.append('search', advancedFilters.searchQuery);
+      if (advancedFilters.status !== 'all') params.append('status', advancedFilters.status);
+      if (advancedFilters.zone && advancedFilters.zone !== 'all') params.append('zone', advancedFilters.zone);
+      if (advancedFilters.dateRange?.from) params.append('dateFrom', advancedFilters.dateRange.from.toISOString());
+      if (advancedFilters.dateRange?.to) params.append('dateTo', advancedFilters.dateRange.to.toISOString());
+      if (advancedFilters.confidenceRange.min > 0) params.append('confidenceMin', advancedFilters.confidenceRange.min.toString());
+      if (advancedFilters.confidenceRange.max < 100) params.append('confidenceMax', advancedFilters.confidenceRange.max.toString());
+      if (advancedFilters.location) params.append('location', advancedFilters.location);
       
       const response = await fetch(`/api/audit-entries?${params}`, {
         credentials: 'include'
@@ -463,24 +478,11 @@ export default function DesktopDashboard() {
                   <CardDescription>Manage and analyze parking audit records</CardDescription>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <Input
-                    placeholder="Search plates, zones..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-[200px]"
-                    data-testid="input-search"
+                  <AdvancedFilters
+                    filters={advancedFilters}
+                    onFiltersChange={setAdvancedFilters}
+                    onReset={() => setAdvancedFilters(defaultFilters)}
                   />
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-[130px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="authorized">Authorized</SelectItem>
-                      <SelectItem value="unauthorized">Unauthorized</SelectItem>
-                      <SelectItem value="unknown">Unknown</SelectItem>
-                    </SelectContent>
-                  </Select>
                   <div className="flex items-center space-x-1">
                     <Button
                       variant="outline"

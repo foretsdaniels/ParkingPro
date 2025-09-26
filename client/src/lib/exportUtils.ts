@@ -70,12 +70,12 @@ export function exportToPDF(data: ExportableAuditEntry[], stats: ExportStats, fi
   
   // Table data
   const tableData = data.map(entry => [
-    entry.id,
-    entry.plateNumber,
-    entry.status.charAt(0).toUpperCase() + entry.status.slice(1),
-    entry.zone,
-    entry.confidence,
-    new Date(entry.timestamp).toLocaleDateString()
+    entry.id || 'N/A',
+    entry.plateNumber || 'N/A',
+    entry.status ? entry.status.charAt(0).toUpperCase() + entry.status.slice(1) : 'Unknown',
+    entry.zone || 'N/A',
+    entry.confidence || 'N/A',
+    entry.timestamp ? new Date(entry.timestamp).toLocaleDateString() : 'N/A'
   ]);
 
   // Create table
@@ -121,13 +121,13 @@ export function exportStatsToCSV(stats: ExportStats, filename: string = 'audit_s
 // Prepare audit entries for export (format data)
 export function prepareAuditEntriesForExport(entries: any[]): ExportableAuditEntry[] {
   return entries.map(entry => ({
-    id: entry.id,
-    plateNumber: entry.plateNumber,
-    status: entry.status,
-    zone: entry.zone || 'Unknown',
+    id: entry.id || 'N/A',
+    plateNumber: entry.plateNumber || 'N/A',
+    status: entry.status || entry.authorizationStatus || 'unknown',
+    zone: entry.zone || entry.parkingZone || 'Unknown',
     confidence: entry.confidence ? `${entry.confidence}%` : 'N/A',
-    timestamp: new Date(entry.timestamp).toLocaleString(),
-    location: entry.location,
-    notes: entry.notes
+    timestamp: entry.timestamp ? new Date(entry.timestamp).toLocaleString() : 'N/A',
+    location: entry.location?.address || entry.location || 'N/A',
+    notes: entry.notes || ''
   }));
 }
