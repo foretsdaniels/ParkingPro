@@ -18,6 +18,7 @@ import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileTex
 import { exportToCSV, exportToPDF, exportStatsToCSV, prepareAuditEntriesForExport, type ExportStats } from "@/lib/exportUtils";
 import { useKeyboardShortcuts, createSelectAllShortcut, createDeleteShortcut, createEscapeShortcut, createExportShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { AdvancedFilters, defaultFilters, type AdvancedFilterOptions } from "@/components/advanced-filters";
+import { NotificationBell } from "@/components/notification-bell";
 import { format, startOfDay, endOfDay, subDays, subWeeks, subMonths } from "date-fns";
 
 interface AuditEntry {
@@ -478,6 +479,7 @@ export default function DesktopDashboard() {
                   <CardDescription>Manage and analyze parking audit records</CardDescription>
                 </div>
                 <div className="flex items-center space-x-2">
+                  <NotificationBell />
                   <AdvancedFilters
                     filters={advancedFilters}
                     onFiltersChange={setAdvancedFilters}

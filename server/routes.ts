@@ -5,7 +5,8 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
-import { insertAuditEntrySchema, insertWhitelistPlateSchema, insertAppSettingSchema, insertUserSchema } from "@shared/schema";
+import { notificationService } from "./notificationService";
+import { insertAuditEntrySchema, insertWhitelistPlateSchema, insertAppSettingSchema, insertUserSchema, insertNotificationSchema, insertNotificationSettingsSchema } from "@shared/schema";
 import { ZodError, z } from "zod";
 
 // Bulk operations validation schemas
@@ -111,6 +112,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const entry = await storage.createAuditEntry(validatedData);
+      
+      // Trigger notifications for violations
+      if (entry.authorizationStatus === 'unauthorized') {
+        const user = req.user as any;
+        try {
+          await notificationService.sendViolationAlert(
+            entry.plateNumber,
+            entry.location || entry.parkingZone || 'Unknown location',
+            user?.id
+          );
+          
+          // Check violation threshold
+          if (user?.id) {
+            await notificationService.checkViolationThreshold(user.id);
+          }
+        } catch (error) {
+          console.error('Error sending violation notification:', error);
+        }
+      }
       
       // Queue for Google Sheets sync
       await storage.queueForGoogleSheetsSync(entry.id);
@@ -379,6 +399,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ user: { id: user.id, username: user.username } });
     } else {
       res.status(401).json({ error: "Not authenticated" });
+    }
+  });
+
+  // Notification routes
+  app.get("/api/notifications", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const isRead = req.query.isRead === 'true' ? true : req.query.isRead === 'false' ? false : undefined;
+      const notifications = await storage.getNotifications(user.id, isRead);
+      res.json(notifications);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      res.status(500).json({ error: "Failed to fetch notifications" });
+    }
+  });
+
+  app.post("/api/notifications", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const validatedData = insertNotificationSchema.parse({
+        ...req.body,
+        userId: user.id
+      });
+      const notification = await notificationService.createAndSendNotification(validatedData);
+      res.json(notification);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid data", details: error.errors });
+      }
+      console.error("Error creating notification:", error);
+      res.status(500).json({ error: "Failed to create notification" });
+    }
+  });
+
+  app.put("/api/notifications/:id/read", requireAuth, async (req, res) => {
+    try {
+      await storage.markNotificationAsRead(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
+      res.status(500).json({ error: "Failed to update notification" });
+    }
+  });
+
+  app.delete("/api/notifications/:id", requireAuth, async (req, res) => {
+    try {
+      await storage.deleteNotification(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting notification:", error);
+      res.status(500).json({ error: "Failed to delete notification" });
+    }
+  });
+
+  // Notification settings routes
+  app.get("/api/notification-settings", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const settings = await storage.getNotificationSettings(user.id);
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching notification settings:", error);
+      res.status(500).json({ error: "Failed to fetch notification settings" });
+    }
+  });
+
+  app.put("/api/notification-settings", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const validatedData = insertNotificationSettingsSchema.partial().parse(req.body);
+      const settings = await storage.updateNotificationSettings(user.id, validatedData);
+      res.json(settings);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid data", details: error.errors });
+      }
+      console.error("Error updating notification settings:", error);
+      res.status(500).json({ error: "Failed to update notification settings" });
+    }
+  });
+
+  // Test notification endpoint (for debugging)
+  app.post("/api/notifications/test", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const { type = 'system_alert', title = 'Test Notification', message = 'This is a test notification' } = req.body;
+      
+      const notification = await notificationService.createAndSendNotification({
+        type,
+        title,
+        message,
+        severity: 'info',
+        userId: user.id,
+        metadata: { test: true }
+      });
+      
+      res.json(notification);
+    } catch (error) {
+      console.error("Error sending test notification:", error);
+      res.status(500).json({ error: "Failed to send test notification" });
     }
   });
 

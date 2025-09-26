@@ -7,10 +7,16 @@ import {
   type InsertWhitelistPlate,
   type AppSetting,
   type InsertAppSetting,
+  type Notification,
+  type InsertNotification,
+  type NotificationSettings,
+  type InsertNotificationSettings,
   users,
   auditEntries,
   whitelistPlates,
-  appSettings
+  appSettings,
+  notifications,
+  notificationSettings
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, asc, like, count, sql, and, gte, inArray } from "drizzle-orm";
@@ -79,6 +85,17 @@ export interface IStorage {
     pendingCount: number;
     isOnline: boolean;
   }>;
+
+  // Notifications
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  getNotifications(userId?: string, isRead?: boolean): Promise<Notification[]>;
+  markNotificationAsRead(id: string): Promise<void>;
+  deleteNotification(id: string): Promise<void>;
+  
+  // Notification Settings
+  getNotificationSettings(userId: string): Promise<NotificationSettings | undefined>;
+  updateNotificationSettings(userId: string, settings: Partial<NotificationSettings>): Promise<NotificationSettings>;
+  createDefaultNotificationSettings(userId: string): Promise<NotificationSettings>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -691,6 +708,75 @@ export class DatabaseStorage implements IStorage {
       pendingCount,
       isOnline,
     };
+  }
+
+  // Notifications
+  async createNotification(notification: InsertNotification): Promise<Notification> {
+    const [newNotification] = await db.insert(notifications).values(notification).returning();
+    return newNotification;
+  }
+
+  async getNotifications(userId?: string, isRead?: boolean): Promise<Notification[]> {
+    let query = db.select().from(notifications);
+    
+    const conditions = [];
+    if (userId) conditions.push(eq(notifications.userId, userId));
+    if (isRead !== undefined) conditions.push(eq(notifications.isRead, isRead));
+    
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+    
+    return query.orderBy(desc(notifications.createdAt));
+  }
+
+  async markNotificationAsRead(id: string): Promise<void> {
+    await db.update(notifications)
+      .set({ isRead: true })
+      .where(eq(notifications.id, id));
+  }
+
+  async deleteNotification(id: string): Promise<void> {
+    await db.delete(notifications).where(eq(notifications.id, id));
+  }
+
+  // Notification Settings
+  async getNotificationSettings(userId: string): Promise<NotificationSettings | undefined> {
+    const [settings] = await db.select()
+      .from(notificationSettings)
+      .where(eq(notificationSettings.userId, userId))
+      .limit(1);
+    
+    if (!settings) {
+      return this.createDefaultNotificationSettings(userId);
+    }
+    
+    return settings;
+  }
+
+  async updateNotificationSettings(userId: string, settings: Partial<NotificationSettings>): Promise<NotificationSettings> {
+    const [updated] = await db.update(notificationSettings)
+      .set({ ...settings, updatedAt: new Date() })
+      .where(eq(notificationSettings.userId, userId))
+      .returning();
+    
+    return updated;
+  }
+
+  async createDefaultNotificationSettings(userId: string): Promise<NotificationSettings> {
+    const [newSettings] = await db.insert(notificationSettings)
+      .values({
+        userId,
+        violationAlerts: true,
+        quotaWarnings: true,
+        systemAlerts: true,
+        soundEnabled: false,
+        emailNotifications: false,
+        violationThreshold: "10"
+      })
+      .returning();
+    
+    return newSettings;
   }
 }
 

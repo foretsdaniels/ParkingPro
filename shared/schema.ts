@@ -43,6 +43,31 @@ export const appSettings = pgTable("app_settings", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type").notNull(), // "violation", "quota_warning", "system_alert"
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  severity: text("severity").notNull().default("info"), // "info", "warning", "error", "success"
+  userId: varchar("user_id"),
+  isRead: boolean("is_read").default(false).notNull(),
+  metadata: jsonb("metadata"), // Additional data like violationCount, plateNumber, etc.
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at"),
+});
+
+export const notificationSettings = pgTable("notification_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  violationAlerts: boolean("violation_alerts").default(true).notNull(),
+  quotaWarnings: boolean("quota_warnings").default(true).notNull(),
+  systemAlerts: boolean("system_alerts").default(true).notNull(),
+  soundEnabled: boolean("sound_enabled").default(false).notNull(),
+  emailNotifications: boolean("email_notifications").default(false).notNull(),
+  violationThreshold: decimal("violation_threshold", { precision: 3, scale: 0 }).default("10"), // Alert after N violations
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -65,6 +90,16 @@ export const insertAppSettingSchema = createInsertSchema(appSettings).omit({
   updatedAt: true,
 });
 
+export const insertNotificationSchema = createInsertSchema(notifications).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertNotificationSettingsSchema = createInsertSchema(notificationSettings).omit({
+  id: true,
+  updatedAt: true,
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
@@ -76,3 +111,9 @@ export type WhitelistPlate = typeof whitelistPlates.$inferSelect;
 
 export type InsertAppSetting = z.infer<typeof insertAppSettingSchema>;
 export type AppSetting = typeof appSettings.$inferSelect;
+
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type Notification = typeof notifications.$inferSelect;
+
+export type InsertNotificationSettings = z.infer<typeof insertNotificationSettingsSchema>;
+export type NotificationSettings = typeof notificationSettings.$inferSelect;
