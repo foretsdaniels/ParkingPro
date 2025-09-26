@@ -13,7 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileText, Trash2, Edit, RefreshCw } from "lucide-react";
+import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileText, Trash2, Edit, RefreshCw, Download, FileSpreadsheet } from "lucide-react";
+import { exportToCSV, exportToPDF, exportStatsToCSV, prepareAuditEntriesForExport, type ExportStats } from "@/lib/exportUtils";
 import { format, startOfDay, endOfDay, subDays, subWeeks, subMonths } from "date-fns";
 
 interface AuditEntry {
@@ -55,6 +56,50 @@ export default function DesktopDashboard() {
   // Bulk operations state
   const [selectedEntries, setSelectedEntries] = useState<Set<string>>(new Set());
   const [isSelectAll, setIsSelectAll] = useState(false);
+  
+  // Export functionality
+  const handleExportCSV = () => {
+    if (!recentEntries) return;
+    const exportData = prepareAuditEntriesForExport(recentEntries);
+    exportToCSV(exportData, 'parking_audit_entries');
+    toast({
+      title: "Export Complete",
+      description: `${recentEntries.length} audit entries exported to CSV`,
+    });
+  };
+
+  const handleExportPDF = () => {
+    if (!recentEntries || !stats) return;
+    const exportData = prepareAuditEntriesForExport(recentEntries);
+    const exportStats: ExportStats = {
+      totalScans: stats.totalScans,
+      authorizedCount: stats.authorizedVehicles,
+      unauthorizedCount: stats.unauthorizedVehicles,
+      unknownCount: stats.totalScans - stats.authorizedVehicles - stats.unauthorizedVehicles,
+      date: format(new Date(), 'MMMM d, yyyy')
+    };
+    exportToPDF(exportData, exportStats, 'parking_audit_report');
+    toast({
+      title: "Report Generated",
+      description: `PDF report with ${recentEntries.length} entries created successfully`,
+    });
+  };
+
+  const handleExportStats = () => {
+    if (!stats) return;
+    const exportStats: ExportStats = {
+      totalScans: stats.totalScans,
+      authorizedCount: stats.authorizedVehicles,
+      unauthorizedCount: stats.unauthorizedVehicles,
+      unknownCount: stats.totalScans - stats.authorizedVehicles - stats.unauthorizedVehicles,
+      date: format(new Date(), 'MMMM d, yyyy')
+    };
+    exportStatsToCSV(exportStats, 'parking_statistics');
+    toast({
+      title: "Statistics Exported",
+      description: "Statistics summary exported to CSV",
+    });
+  };
 
   // Fetch dashboard statistics
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
@@ -397,6 +442,38 @@ export default function DesktopDashboard() {
                       <SelectItem value="unknown">Unknown</SelectItem>
                     </SelectContent>
                   </Select>
+                  <div className="flex items-center space-x-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportCSV}
+                      disabled={!recentEntries?.length}
+                      data-testid="button-export-csv"
+                    >
+                      <FileSpreadsheet className="h-4 w-4 mr-1" />
+                      CSV
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportPDF}
+                      disabled={!recentEntries?.length}
+                      data-testid="button-export-pdf"
+                    >
+                      <FileText className="h-4 w-4 mr-1" />
+                      PDF
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleExportStats}
+                      disabled={!stats}
+                      data-testid="button-export-stats"
+                    >
+                      <Download className="h-4 w-4 mr-1" />
+                      Stats
+                    </Button>
+                  </div>
                 </div>
               </div>
               
