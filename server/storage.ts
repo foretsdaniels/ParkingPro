@@ -13,7 +13,7 @@ import {
   appSettings
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, asc, like, count, sql, and, gte } from "drizzle-orm";
+import { eq, desc, asc, like, count, sql, and, gte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { GoogleSheetsService } from "./googleSheetsService";
 
@@ -33,6 +33,10 @@ export interface IStorage {
   createAuditEntry(entry: InsertAuditEntry): Promise<AuditEntry>;
   updateAuditEntry(id: string, updates: Partial<AuditEntry>): Promise<AuditEntry | undefined>;
   deleteAuditEntry(id: string): Promise<boolean>;
+  
+  // Bulk operations
+  bulkDeleteAuditEntries(entryIds: string[]): Promise<number>;
+  bulkUpdateAuditEntryStatus(entryIds: string[], status: string): Promise<number>;
   getAuditStats(period?: string): Promise<{
     totalScans: number;
     authorizedVehicles: number;
@@ -234,10 +238,39 @@ export class DatabaseStorage implements IStorage {
   async deleteAuditEntry(id: string): Promise<boolean> {
     try {
       const result = await db.delete(auditEntries).where(eq(auditEntries.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount || 0) > 0;
     } catch (error) {
       console.error('Error deleting audit entry:', error);
       return false;
+    }
+  }
+
+  async bulkDeleteAuditEntries(entryIds: string[]): Promise<number> {
+    try {
+      if (entryIds.length === 0) return 0;
+      
+      const result = await db.delete(auditEntries)
+        .where(inArray(auditEntries.id, entryIds));
+      
+      return result.rowCount || 0;
+    } catch (error) {
+      console.error('Error bulk deleting audit entries:', error);
+      throw error;
+    }
+  }
+
+  async bulkUpdateAuditEntryStatus(entryIds: string[], status: string): Promise<number> {
+    try {
+      if (entryIds.length === 0) return 0;
+      
+      const result = await db.update(auditEntries)
+        .set({ authorizationStatus: status as "authorized" | "unauthorized" | "unknown" })
+        .where(inArray(auditEntries.id, entryIds));
+      
+      return result.rowCount || 0;
+    } catch (error) {
+      console.error('Error bulk updating audit entries:', error);
+      throw error;
     }
   }
 

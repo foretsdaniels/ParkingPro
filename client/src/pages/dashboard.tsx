@@ -6,11 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileText } from "lucide-react";
+import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileText, Trash2, Edit, RefreshCw } from "lucide-react";
 import { format, startOfDay, endOfDay, subDays, subWeeks, subMonths } from "date-fns";
 
 interface AuditEntry {
@@ -48,6 +51,10 @@ export default function DesktopDashboard() {
   const [selectedPeriod, setSelectedPeriod] = useState('7days');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  
+  // Bulk operations state
+  const [selectedEntries, setSelectedEntries] = useState<Set<string>>(new Set());
+  const [isSelectAll, setIsSelectAll] = useState(false);
 
   // Fetch dashboard statistics
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
@@ -81,6 +88,79 @@ export default function DesktopDashboard() {
       return data.entries || [];
     },
     refetchInterval: 30000
+  });
+
+  // Bulk operations helpers
+  const handleSelectAll = () => {
+    if (isSelectAll) {
+      setSelectedEntries(new Set());
+      setIsSelectAll(false);
+    } else {
+      const allIds = new Set(recentEntries?.map(entry => entry.id) || []);
+      setSelectedEntries(allIds);
+      setIsSelectAll(true);
+    }
+  };
+
+  const handleSelectEntry = (entryId: string) => {
+    const newSelected = new Set(selectedEntries);
+    if (newSelected.has(entryId)) {
+      newSelected.delete(entryId);
+    } else {
+      newSelected.add(entryId);
+    }
+    setSelectedEntries(newSelected);
+    setIsSelectAll(newSelected.size === recentEntries?.length);
+  };
+
+  // Bulk delete mutation
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (entryIds: string[]) => {
+      return apiRequest('POST', '/api/audit-entries/bulk/delete', { entryIds });
+    },
+    onSuccess: (_, variables) => {
+      const deletedCount = variables.length;
+      queryClient.invalidateQueries({ queryKey: ['/api/audit-entries'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      setSelectedEntries(new Set());
+      setIsSelectAll(false);
+      toast({
+        title: "Success",
+        description: `${deletedCount} entries deleted successfully`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to delete entries. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Bulk status update mutation
+  const bulkStatusMutation = useMutation({
+    mutationFn: async (data: { entryIds: string[]; status: string }) => {
+      return apiRequest('POST', '/api/audit-entries/bulk/status', data);
+    },
+    onSuccess: (_, variables) => {
+      const updatedCount = variables.entryIds.length;
+      queryClient.invalidateQueries({ queryKey: ['/api/audit-entries'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/stats'] });
+      setSelectedEntries(new Set());
+      setIsSelectAll(false);
+      toast({
+        title: "Success",
+        description: `${updatedCount} entries updated to ${variables.status}`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update entry status. Please try again.",
+        variant: "destructive",
+      });
+    },
   });
 
   // Sync mutation
@@ -290,15 +370,22 @@ export default function DesktopDashboard() {
 
         {/* Recent Activity and Top Zones */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Recent Entries */}
-          <Card>
+          {/* Audit Entries Management */}
+          <Card className="col-span-2">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Recent Scan Activity</CardTitle>
-                  <CardDescription>Latest parking lot scans</CardDescription>
+                  <CardTitle>Audit Entries Management</CardTitle>
+                  <CardDescription>Manage and analyze parking audit records</CardDescription>
                 </div>
-                <div className="flex space-x-2">
+                <div className="flex items-center space-x-2">
+                  <Input
+                    placeholder="Search plates, zones..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-[200px]"
+                    data-testid="input-search"
+                  />
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="w-[130px]">
                       <SelectValue />
@@ -312,41 +399,155 @@ export default function DesktopDashboard() {
                   </Select>
                 </div>
               </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {entriesLoading ? (
-                  <div className="text-center py-4">
-                    <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full mx-auto" />
+              
+              {/* Bulk Actions Bar */}
+              {selectedEntries.size > 0 && (
+                <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                  <span className="text-sm font-medium">
+                    {selectedEntries.size} entries selected
+                  </span>
+                  <div className="flex items-center space-x-2">
+                    <Select onValueChange={(status) => bulkStatusMutation.mutate({ 
+                      entryIds: Array.from(selectedEntries), 
+                      status 
+                    })}>
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue placeholder="Update Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="authorized">Mark Authorized</SelectItem>
+                        <SelectItem value="unauthorized">Mark Unauthorized</SelectItem>
+                        <SelectItem value="unknown">Mark Unknown</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="destructive" size="sm" data-testid="button-bulk-delete">
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Delete Selected
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete Selected Entries</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure you want to delete {selectedEntries.size} audit entries? This action cannot be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => bulkDeleteMutation.mutate(Array.from(selectedEntries))}
+                            className="bg-destructive hover:bg-destructive/90"
+                            data-testid="button-confirm-delete"
+                          >
+                            Delete {selectedEntries.size} Entries
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
-                ) : recentEntries && recentEntries.length > 0 ? (
-                  recentEntries.map((entry) => (
-                    <div key={entry.id} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <div className="font-mono text-sm font-medium">
-                          {entry.plateNumber}
-                        </div>
-                        <Badge 
-                          variant={entry.authorizationStatus === 'authorized' ? 'default' : 
-                                   entry.authorizationStatus === 'unauthorized' ? 'destructive' : 'secondary'}
-                        >
-                          {entry.authorizationStatus}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                        <MapPin className="h-3 w-3" />
-                        <span>{entry.parkingZone}</span>
-                        <Clock className="h-3 w-3 ml-2" />
-                        <span>{format(new Date(entry.timestamp), 'MMM dd, HH:mm')}</span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-center py-8 text-muted-foreground">
-                    No recent scan activity
-                  </p>
-                )}
-              </div>
+                </div>
+              )}
+            </CardHeader>
+            
+            <CardContent>
+              {entriesLoading ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full mx-auto" />
+                  <p className="text-muted-foreground mt-2">Loading entries...</p>
+                </div>
+              ) : recentEntries && recentEntries.length > 0 ? (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">
+                          <Checkbox
+                            checked={isSelectAll}
+                            onCheckedChange={handleSelectAll}
+                            data-testid="checkbox-select-all"
+                          />
+                        </TableHead>
+                        <TableHead>Plate Number</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Zone</TableHead>
+                        <TableHead>Confidence</TableHead>
+                        <TableHead>Timestamp</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {recentEntries.map((entry) => (
+                        <TableRow key={entry.id} data-testid={`row-entry-${entry.id}`}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedEntries.has(entry.id)}
+                              onCheckedChange={() => handleSelectEntry(entry.id)}
+                              data-testid={`checkbox-entry-${entry.id}`}
+                            />
+                          </TableCell>
+                          <TableCell className="font-mono font-medium">
+                            {entry.plateNumber}
+                          </TableCell>
+                          <TableCell>
+                            <Badge 
+                              variant={entry.authorizationStatus === 'authorized' ? 'default' : 
+                                       entry.authorizationStatus === 'unauthorized' ? 'destructive' : 'secondary'}
+                              data-testid={`badge-status-${entry.id}`}
+                            >
+                              {entry.authorizationStatus}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{entry.parkingZone}</TableCell>
+                          <TableCell>{(entry.confidence * 100).toFixed(0)}%</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {format(new Date(entry.timestamp), 'MMM dd, HH:mm')}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center space-x-1">
+                              <Button variant="ghost" size="sm" data-testid={`button-edit-${entry.id}`}>
+                                <Edit className="h-3 w-3" />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" data-testid={`button-delete-${entry.id}`}>
+                                    <Trash2 className="h-3 w-3 text-destructive" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Entry</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure you want to delete the entry for plate "{entry.plateNumber}"?
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => bulkDeleteMutation.mutate([entry.id])}
+                                      className="bg-destructive hover:bg-destructive/90"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Car className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-muted-foreground">No audit entries found</p>
+                  <p className="text-sm text-muted-foreground">Try adjusting your filters</p>
+                </div>
+              )}
             </CardContent>
           </Card>
 

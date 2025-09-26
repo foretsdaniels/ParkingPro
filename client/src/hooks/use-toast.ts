@@ -169,6 +169,16 @@ function toast({ ...props }: Toast) {
 }
 
 function useToast() {
+  // Add defensive check for useState
+  if (!useState) {
+    console.error('useState is not available - React hooks issue detected');
+    return {
+      toasts: [],
+      toast: () => ({ id: '', dismiss: () => {}, update: () => {} }),
+      dismiss: () => {},
+    };
+  }
+
   const [state, setState] = useState<State>(memoryState)
 
   useEffect(() => {

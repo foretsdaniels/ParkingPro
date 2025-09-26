@@ -6,7 +6,17 @@ import { storage } from "./storage";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import { ObjectPermission } from "./objectAcl";
 import { insertAuditEntrySchema, insertWhitelistPlateSchema, insertAppSettingSchema, insertUserSchema } from "@shared/schema";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
+
+// Bulk operations validation schemas
+const bulkEntryIdsSchema = z.object({
+  entryIds: z.array(z.string().min(1)).min(1, "Must select at least one entry")
+});
+
+const bulkStatusUpdateSchema = z.object({
+  entryIds: z.array(z.string().min(1)).min(1, "Must select at least one entry"),
+  status: z.enum(["authorized", "unauthorized", "unknown"])
+});
 
 // Authentication middleware
 function requireAuth(req: any, res: any, next: any) {
@@ -144,6 +154,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating audit entry images:", error);
       res.status(500).json({ error: "Failed to update images" });
+    }
+  });
+
+  // Bulk operations
+  app.post("/api/audit-entries/bulk/delete", requireAuth, async (req, res) => {
+    try {
+      const validatedData = bulkEntryIdsSchema.parse(req.body);
+      const deletedCount = await storage.bulkDeleteAuditEntries(validatedData.entryIds);
+      res.json({ success: true, deletedCount });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid data", details: error.errors });
+      }
+      console.error("Error bulk deleting audit entries:", error);
+      res.status(500).json({ error: "Failed to delete audit entries" });
+    }
+  });
+
+  app.post("/api/audit-entries/bulk/status", requireAuth, async (req, res) => {
+    try {
+      const validatedData = bulkStatusUpdateSchema.parse(req.body);
+      const updatedCount = await storage.bulkUpdateAuditEntryStatus(validatedData.entryIds, validatedData.status);
+      res.json({ success: true, updatedCount });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid data", details: error.errors });
+      }
+      console.error("Error bulk updating audit entry status:", error);
+      res.status(500).json({ error: "Failed to update audit entry status" });
     }
   });
 
