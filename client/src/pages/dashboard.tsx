@@ -8,13 +8,15 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileText, Trash2, Edit, RefreshCw, Download, FileSpreadsheet } from "lucide-react";
+import { Calendar, Users, Car, AlertTriangle, TrendingUp, Clock, MapPin, FileText, Trash2, Edit, RefreshCw, Download, FileSpreadsheet, Keyboard, HelpCircle } from "lucide-react";
 import { exportToCSV, exportToPDF, exportStatsToCSV, prepareAuditEntriesForExport, type ExportStats } from "@/lib/exportUtils";
+import { useKeyboardShortcuts, createSelectAllShortcut, createDeleteShortcut, createEscapeShortcut, createExportShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { format, startOfDay, endOfDay, subDays, subWeeks, subMonths } from "date-fns";
 
 interface AuditEntry {
@@ -100,6 +102,43 @@ export default function DesktopDashboard() {
       description: "Statistics summary exported to CSV",
     });
   };
+
+  // Keyboard shortcuts
+  const keyboardShortcuts = [
+    createSelectAllShortcut(() => {
+      if (!recentEntries?.length) return;
+      if (isSelectAll) {
+        setSelectedEntries(new Set());
+        setIsSelectAll(false);
+      } else {
+        setSelectedEntries(new Set(recentEntries.map(entry => entry.id)));
+        setIsSelectAll(true);
+      }
+      toast({
+        title: isSelectAll ? "Selection Cleared" : "All Entries Selected",
+        description: isSelectAll ? "No entries selected" : `${recentEntries.length} entries selected`,
+      });
+    }),
+    createDeleteShortcut(() => {
+      if (selectedEntries.size === 0) return;
+      const selectedArray = Array.from(selectedEntries);
+      bulkDeleteMutation.mutate(selectedArray);
+    }),
+    createEscapeShortcut(() => {
+      if (selectedEntries.size > 0) {
+        setSelectedEntries(new Set());
+        setIsSelectAll(false);
+        toast({
+          title: "Selection Cleared",
+          description: "All entries deselected",
+        });
+      }
+    }),
+    ...createExportShortcuts(handleExportCSV, handleExportPDF)
+  ];
+
+  // Enable keyboard shortcuts
+  useKeyboardShortcuts(keyboardShortcuts, true);
 
   // Fetch dashboard statistics
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
@@ -473,6 +512,63 @@ export default function DesktopDashboard() {
                       <Download className="h-4 w-4 mr-1" />
                       Stats
                     </Button>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          data-testid="button-keyboard-shortcuts"
+                        >
+                          <Keyboard className="h-4 w-4 mr-1" />
+                          Shortcuts
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-md">
+                        <DialogHeader>
+                          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+                          <DialogDescription>
+                            Speed up your workflow with these keyboard shortcuts
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <h4 className="font-medium">Selection</h4>
+                            <div className="space-y-1 text-sm">
+                              <div className="flex justify-between">
+                                <span>Select All</span>
+                                <code className="bg-muted px-1 rounded">Ctrl + A</code>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Clear Selection</span>
+                                <code className="bg-muted px-1 rounded">Escape</code>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <h4 className="font-medium">Actions</h4>
+                            <div className="space-y-1 text-sm">
+                              <div className="flex justify-between">
+                                <span>Delete Selected</span>
+                                <code className="bg-muted px-1 rounded">Delete</code>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <h4 className="font-medium">Export</h4>
+                            <div className="space-y-1 text-sm">
+                              <div className="flex justify-between">
+                                <span>Export CSV</span>
+                                <code className="bg-muted px-1 rounded">Ctrl + E</code>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Export PDF</span>
+                                <code className="bg-muted px-1 rounded">Ctrl + Shift + P</code>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                   </div>
                 </div>
               </div>
