@@ -9,19 +9,49 @@ import { storage } from "./storage";
 import { WebSocketService } from "./websocketService";
 import { notificationService } from "./notificationService";
 
+// Production environment validation
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction) {
+  const requiredEnvVars = ['SESSION_SECRET'];
+  const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+  
+  if (missingVars.length > 0) {
+    console.error('❌ Missing required environment variables in production:');
+    missingVars.forEach(varName => {
+      console.error(`   - ${varName}`);
+    });
+    console.error('Please set these environment variables for production deployment.');
+    process.exit(1);
+  }
+  
+  // Warn about missing database URL but don't fail (app supports in-memory storage)
+  if (!process.env.DATABASE_URL) {
+    console.warn('⚠️  DATABASE_URL not set - using in-memory storage (data will not persist)');
+  }
+  
+  console.log('✅ Production environment validation passed');
+}
+
 const app = express();
+
+// Trust proxy for secure cookies behind load balancers/proxies (like Replit deployment)
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Session configuration
+// Session configuration - production ready
 const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false, // Set to true in production with HTTPS
+    secure: isProduction, // true in production (HTTPS), false in development (HTTP)
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: isProduction ? 'strict' : 'lax' // Strict for production security
   }
 });
 
