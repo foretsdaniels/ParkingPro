@@ -140,19 +140,43 @@ export default function CameraView() {
       <div className="relative w-full h-screen bg-gray-900">
         {cameraError ? (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center text-white p-4">
-              <i className="fas fa-camera-slash text-4xl mb-4 text-muted-foreground"></i>
-              <h3 className="text-lg font-medium mb-2">Camera Access Required</h3>
-              <p className="text-sm text-gray-300 mb-4">
-                Please allow camera access to scan license plates
+            <div className="text-center text-white p-6 max-w-md mx-auto">
+              <i className="fas fa-camera-slash text-4xl mb-4 text-red-500"></i>
+              <h3 className="text-lg font-medium mb-2">Camera Unavailable</h3>
+              <p className="text-sm text-gray-300 mb-6">
+                {cameraError}
               </p>
-              <button 
-                onClick={startCamera}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg"
-                data-testid="button-retry-camera"
-              >
-                Retry
-              </button>
+              
+              <div className="space-y-3">
+                <button 
+                  onClick={startCamera}
+                  disabled={cameraLoading}
+                  className="w-full px-6 py-3 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50"
+                  data-testid="button-retry-camera"
+                >
+                  {cameraLoading ? 'Trying...' : 'Try Again'}
+                </button>
+                
+                <button 
+                  onClick={() => setLocation('/dashboard')}
+                  className="w-full px-6 py-3 bg-muted hover:bg-muted/90 text-foreground rounded-lg transition-colors"
+                  data-testid="button-go-dashboard"
+                >
+                  Go to Dashboard
+                </button>
+              </div>
+              
+              {/* Production troubleshooting */}
+              <div className="mt-6 p-4 bg-black/20 rounded-lg text-xs text-gray-400">
+                <p className="font-medium mb-2">Troubleshooting:</p>
+                <ul className="text-left space-y-1">
+                  <li>• Allow camera permissions in browser settings</li>
+                  <li>• Ensure app is using HTTPS (required for camera)</li>
+                  <li>• Close other apps using the camera</li>
+                  <li>• Try Chrome, Firefox, or Safari browser</li>
+                  <li>• Refresh the page and try again</li>
+                </ul>
+              </div>
             </div>
           </div>
         ) : (
